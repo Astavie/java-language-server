@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -24,6 +25,13 @@ import org.javacs.debug.proto.*;
 public class JavaDebugServer implements DebugServer {
     public static void main(String[] args) { // TODO don't show references for main method
         // createLogFile();
+        
+        boolean quiet = Arrays.stream(args).anyMatch("--quiet"::equals);
+
+        if (quiet) {
+            LOG.setLevel(Level.OFF);
+        }
+        
         LOG.info(String.join(" ", args));
         new DebugAdapter(JavaDebugServer::new, System.in, System.out).run();
         System.exit(0);
