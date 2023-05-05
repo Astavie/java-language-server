@@ -8,6 +8,7 @@ import com.sun.jdi.request.BreakpointRequest;
 import com.sun.jdi.request.EventRequest;
 import com.sun.jdi.request.StepRequest;
 import java.io.IOException;
+import java.lang.Math;
 import java.net.ConnectException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -558,7 +559,7 @@ public class JavaDebugServer implements DebugServer {
         frame.id = uniqueFrameId(f);
         frame.name = f.location().method().name();
         frame.source = asSource(f.location());
-        frame.line = f.location().lineNumber();
+        frame.line = Math.max(0, f.location().lineNumber());
         return frame;
     }
 
