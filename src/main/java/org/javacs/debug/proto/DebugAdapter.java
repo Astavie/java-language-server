@@ -380,8 +380,14 @@ public class DebugAdapter {
                     }
                 case "continue":
                     {
-                        server.continue_(gson.fromJson(json, ContinueRequest.class).arguments);
-                        ack(req);
+                        var resp = new ContinueResponse();
+                        resp.type = "response";
+                        resp.command = req.command;
+                        resp.request_seq = req.seq;
+                        resp.seq = respCounter++;
+                        resp.success = true;
+                        resp.body = server.continue_(gson.fromJson(json, ContinueRequest.class).arguments);
+                        send(resp);
                         break;
                     }
                 case "next":

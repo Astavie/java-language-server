@@ -19,7 +19,7 @@ public interface DebugServer {
 
     void terminate(TerminateArguments req);
 
-    void continue_(ContinueArguments req);
+    ContinueResponseBody continue_(ContinueArguments req);
 
     void next(NextArguments req);
 

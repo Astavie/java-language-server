@@ -448,8 +448,12 @@ public class JavaDebugServer implements DebugServer {
     }
 
     @Override
-    public void continue_(ContinueArguments req) {
+    public ContinueResponseBody continue_(ContinueArguments req) {
         vm.resume();
+
+        var res = new ContinueResponseBody();
+        res.allThreadsContinued = true;
+        return res;
     }
 
     @Override
