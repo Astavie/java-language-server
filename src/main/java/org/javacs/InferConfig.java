@@ -5,12 +5,14 @@ import com.google.devtools.build.lib.analysis.AnalysisProtosV2;
 import com.google.devtools.build.lib.analysis.AnalysisProtosV2.PathFragment;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -78,6 +80,12 @@ class InferConfig {
             return bazelClasspath(bazelWorkspaceRoot);
         }
 
+        // Gradle
+        // TODO: support gradlew.bat for Windows
+        if (Files.exists(workspaceRoot.resolve("gradlew"))) {
+            return gradleDeps(false);
+        }
+
         return Collections.emptySet();
     }
 
@@ -119,6 +127,12 @@ class InferConfig {
             return bazelSourcepath(bazelWorkspaceRoot);
         }
 
+        // Gradle
+        // TODO: support gradlew.bat for Windows
+        if (Files.exists(workspaceRoot.resolve("gradlew"))) {
+            return gradleDeps(true);
+        }
+
         return Collections.emptySet();
     }
 
@@ -143,6 +157,108 @@ class InferConfig {
             return NOT_FOUND;
         }
         return jar;
+    }
+
+    private static final Pattern JAR_PATTERN = Pattern.compile("^(?<groupId>.+):(?<artifactId>.+):(?<version>.+)$");
+
+    private Set<Path> gradleDeps(boolean sources) {
+      final String jarNameModifier = sources ? "-sources" : "";
+
+      LOG.info("Getting Gradle deps");
+
+      // TODO: don't hardcode this, but it's much faster than the other one
+      final Path cacheHome = gradleHome.resolve(Paths.get("caches", "modules-2", "files-2.1"));
+      final Path loomHome = workspaceRoot.resolve(Paths.get(".gradle", "loom-cache", "minecraftMaven"));
+      final Path remappedHome = workspaceRoot.resolve(Paths.get(".gradle", "loom-cache", "remapped_mods"));
+      LOG.info("Searching for jars in " + cacheHome.toString() + " and in " + loomHome.toString());
+
+      try {
+        var deps = new HashMap<String, Path>();
+        for (String project : gradleProjects()) {
+          Scanner scanner = new Scanner(runGradleTask(project + ":dependencies"));
+          while (scanner.hasNext()) {
+            String word = scanner.next();
+            if (deps.containsKey(word)) {
+              continue;
+            }
+            Matcher match = JAR_PATTERN.matcher(word);
+            if (match.matches()) {
+              String groupId = match.group("groupId");
+              String artifactId = match.group("artifactId");
+              String version = match.group("version");
+
+              String[] groupSplit = groupId.split("\\.");
+              String groupFirst = groupSplit[0];
+              String[] groupRest = Arrays.copyOfRange(groupSplit, 1, groupSplit.length);
+              Path group = Paths.get(groupFirst, groupRest);
+
+              File dependencyFolder = cacheHome.resolve(Paths.get(groupId, artifactId, version)).toFile();
+              File minecraftFolder = loomHome.resolve(group).resolve(Paths.get(artifactId, version)).toFile();
+              File remappedFolder = remappedHome.resolve(group).resolve(Paths.get(artifactId, version)).toFile();
+
+              if (remappedFolder.exists()) {
+                // check if inside $pwd/.gradle/loom-cache/remapped_mods
+                File file = new File(remappedFolder, artifactId + "-" + version + jarNameModifier + ".jar");
+                if (file.exists()) {
+                  deps.put(word, file.toPath());
+                }
+              } else if (minecraftFolder.exists()) {
+                // check if inside $pwd/.gradle/loom-cache/minecraftMaven
+                File file = new File(minecraftFolder, artifactId + "-" + version + jarNameModifier + ".jar");
+                if (file.exists()) {
+                  deps.put(word, file.toPath());
+                }
+              } else if (dependencyFolder.exists()) {
+                // check if inside ~/.gradle/caches
+                for (File hashFolder : dependencyFolder.listFiles()) {
+                  File file = new File(hashFolder, artifactId + "-" + version + jarNameModifier + ".jar");
+                  if (file.exists()) {
+                    deps.put(word, file.toPath());
+                  }
+                }
+              }
+
+              // findGradleJar(artifact, false).ifPresentOrElse(deps::add, () -> LOG.severe("Couldn't find Gradle dependency: " + artifact.toString()));
+              // findGradleJar(artifact, false).ifPresent(jar -> deps.put(word, jar));
+            }
+          }
+        }
+        // LOG.info("Found " + deps.size() + " deps in total");
+        return new HashSet<>(deps.values());
+      } catch (IOException e) {
+        LOG.severe("Failed to load Gradle deps: " + e.getMessage());
+        return Collections.emptySet();
+      }
+    }
+
+    private List<String> gradleProjects() throws IOException {
+      var projects = new ArrayList<String>();
+      projects.add(""); // Always add the root project.
+      Scanner scanner = new Scanner(runGradleTask("projects"));
+      while (scanner.hasNextLine()) {
+        String line = scanner.nextLine();
+        if (line.contains("--- Project")) {
+          int endQuote = line.lastIndexOf("'");
+          int startQuote = line.lastIndexOf("'", endQuote-1);
+          String project = line.substring(startQuote+1, endQuote);
+          projects.add(project);
+        }
+      }
+      return projects;
+    }
+
+    private InputStream runGradleTask(String... args) throws IOException {
+      String[] command = new String[args.length+1];
+      command[0] = "./gradlew";
+      for (var i = 0; i < args.length; i++) {
+        command[i+1] = args[i];
+      }
+      Process p = new ProcessBuilder(command)
+        .directory(workspaceRoot.toFile())
+        .redirectOutput(ProcessBuilder.Redirect.PIPE)
+        .start();
+
+      return p.getInputStream();
     }
 
     private Path findGradleJar(Artifact artifact, boolean source) {
